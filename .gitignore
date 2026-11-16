@@ -3,8 +3,10 @@ __pycache__/
 .venv/
 build/
 dist/
-tests/
 .build-tools/
 .installer-smoke/
 build_support/*.spec
 MinePirata-Setup-*.exe
+/MinePirata-Setup-1.0.sha256
+/tests/
+build.ps1
