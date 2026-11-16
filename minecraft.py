@@ -1,5 +1,3 @@
-"""Motor offline para instalações locais. Usa somente a biblioteca padrão."""
-
 from __future__ import annotations
 
 import hashlib
@@ -9,13 +7,14 @@ import platform
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 
-APP_NAME = "BlockLauncher"
+APP_NAME = "Mine Pirata"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home() / ".config")) / APP_NAME
 GAME_DIR = Path(os.environ.get("APPDATA", Path.home())) / ".minecraft"
 OS_NAME = {"Windows": "windows", "Darwin": "osx"}.get(platform.system(), "linux")
@@ -377,4 +376,30 @@ def start_game(plan: LaunchPlan, app_dir: Path = APP_DIR) -> subprocess.Popen:
         output.write(f"{APP_NAME} | {plan.version} | Java {plan.java_version}\n")
         output.flush()
         return subprocess.Popen(command, cwd=plan.game_dir, stdin=subprocess.DEVNULL,
-                                stdout=output, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                stdout=output, stderr=subprocess.STDOUT, creationflags=NO_WINDOW,
+                                start_new_session=os.name != "nt")
+
+
+def terminate_game(process: subprocess.Popen, timeout: float = 10) -> None:
+    """Encerra somente o processo lançado pelo launcher e seus descendentes."""
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            taskkill = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "taskkill.exe"
+            result = subprocess.run([str(taskkill), "/PID", str(process.pid), "/T", "/F"],
+                                    capture_output=True, text=True, errors="replace",
+                                    timeout=timeout, creationflags=NO_WINDOW)
+            if result.returncode and process.poll() is None:
+                details = (result.stderr or result.stdout).strip()
+                raise LaunchError(f"Não foi possível encerrar o Minecraft: {details}")
+        else:
+            # start_game cria uma sessão própria, sem incluir o launcher no grupo.
+            if os.getpgid(process.pid) != process.pid:
+                raise LaunchError("O jogo não pertence a um grupo de processos isolado.")
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=timeout)
+    except ProcessLookupError:
+        process.wait(timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise LaunchError(f"Não foi possível encerrar o Minecraft: {error}") from error

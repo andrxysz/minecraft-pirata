@@ -1,4 +1,4 @@
-"""Interface Tkinter do Minecraft Pirata. Execute: python launcher.py."""
+"""Interface Tkinter do Mine Pirata. Execute: python launcher.py."""
 
 from __future__ import annotations
 
@@ -16,8 +16,9 @@ import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from minecraft import (APP_DIR, GAME_DIR, LaunchError, build_plan, installed_versions,
-                       load_settings, save_settings, start_game)
+                       load_settings, read_json, save_settings, start_game, terminate_game, version_file)
 from installer import InstallCancelled, fetch_catalog, install_version
+from version_selector import VersionCombobox
 
 
 NICK_RE = re.compile(r"[A-Za-z0-9_]{3,16}")
@@ -49,7 +50,7 @@ THEMES = {
             "grass": "#3c8a35", "grass_light": "#4ea345", "grass_dark": "#2f722a",
             "dirt": "#5b412e", "dirt_speck": "#4b3424", "stone": "#50575e", "stone_speck": "#454b51",
             "log": "#4c3420", "log_dark": "#3d2918", "leaf": ("#2d7535", "#27662e"),
-            "subtitle": "#b2c0b7", "eyebrow": "BOA NOITE, AVENTUREIRO",
+            "subtitle": "#b2c0b7", "eyebrow": "BEM-VINDO!",
         },
     },
 }
@@ -108,7 +109,7 @@ class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.scale = max(1.0, self.winfo_fpixels("1i") / 96)
-        self.title("Minecraft Pirata")
+        self.title("Mine Pirata")
         self.geometry(f"{self.px(1060)}x{self.px(680)}")
         self.minsize(self.px(940), self.px(660))
         self._set_icon()
@@ -116,10 +117,13 @@ class Launcher(tk.Tk):
         apply_theme(self.settings.get("theme", "light"))
         self.nickname = tk.StringVar(value=str(self.settings.get("nickname", "Player")))
         self.version = tk.StringVar()
+        self.show_betas = tk.BooleanVar(value=bool(self.settings.get("show_betas", False)))
+        self.show_snapshots = tk.BooleanVar(value=bool(self.settings.get("show_snapshots", False)))
         self.status = tk.StringVar()
         self.status_tone = "idle"
         self.version_list: list[str] = []
         self.local_versions: list[str] = []
+        self.local_version_types: dict[str, str] = {}
         self.catalog = fetch_catalog(refresh=False)
         self.catalog_loading = False
         self.cancel_install = threading.Event()
@@ -128,6 +132,7 @@ class Launcher(tk.Tk):
         self.play_text = "PLAY"
         self.events = queue.Queue()
         self.process = None
+        self.stopping = False
         self.busy = False
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.nickname.trace_add("write", lambda *_: self.on_nick())
@@ -175,8 +180,10 @@ class Launcher(tk.Tk):
                         upperbordercolor=BORDER, lowerbordercolor=BORDER, focuscolor=CARD)
         style.map("TCheckbutton", background=[("active", CARD)],
                   indicatorbackground=[("pressed", ACCENT_SOFT), ("selected", ACCENT_SOFT)])
+        style.configure("VersionFilter.TCheckbutton", font=("Segoe UI", 9))
         style.configure("Install.Horizontal.TProgressbar", background=ACCENT,
-                        troughcolor=FIELD, bordercolor=FIELD, lightcolor=ACCENT, darkcolor=ACCENT)
+                        troughcolor=FIELD, bordercolor=FIELD, lightcolor=ACCENT, darkcolor=ACCENT,
+                        thickness=6)
 
     def card(self, parent, **kwargs):
         return tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=BORDER, **kwargs)
@@ -236,7 +243,7 @@ class Launcher(tk.Tk):
         self.draw_block_icon(logo, size)
         names = tk.Frame(bar, bg=CARD)
         names.pack(side="left", padx=(self.px(12), 0))
-        self.text(names, "Minecraft Pirata", 13, "bold").pack(anchor="w")
+        self.text(names, "Mine Pirata", 13, "bold").pack(anchor="w")
         self.text(names, "Minecraft Java Edition", 8, color=MUTED).pack(anchor="w")
 
         gear = tk.Button(bar, text="⚙", command=self.open_settings, bg=CARD, fg=MUTED,
@@ -260,7 +267,7 @@ class Launcher(tk.Tk):
         for text, path in (("Abrir pasta do jogo", GAME_DIR), ("Abrir logs", APP_DIR / "logs")):
             self.link(footer, text, lambda p=path: self.open_folder(p),
                       font=("Segoe UI", 9)).pack(side="left", padx=(0, self.px(22)))
-        self.text(footer, "v1.2", 8, color=MUTED).pack(side="right")
+        self.text(footer, "Mine Pirata não é associado a Mojang ou Microsoft • v1.0", 8, color=MUTED).pack(side="right")
 
     def _hero(self, parent):
         frame = self.card(parent)
@@ -274,13 +281,12 @@ class Launcher(tk.Tk):
         row.pack(fill="x", pady=(self.px(16), 0))
         self.stat_values = {}
         items = (("versions", "VERSÕES INSTALADAS", ACCENT),
-                 ("last", "ÚLTIMA VERSÃO JOGADA", "#3b82c4"),
                  ("memory", "MEMÓRIA SELECIONADA", "#d08a1e"))
         for column, (key, title, color) in enumerate(items):
             row.columnconfigure(column, weight=1, uniform="stats")
             box = self.card(row)
             box.grid(row=0, column=column, sticky="nsew",
-                     padx=(0 if column == 0 else self.px(8), 0 if column == 2 else self.px(8)))
+                     padx=(0 if column == 0 else self.px(8), 0 if column == len(items) - 1 else self.px(8)))
             tk.Frame(box, bg=color, height=self.px(3)).pack(fill="x")
             inner = tk.Frame(box, bg=CARD, padx=self.px(16), pady=self.px(12))
             inner.pack(fill="both", expand=True)
@@ -296,19 +302,20 @@ class Launcher(tk.Tk):
         panel.pack(side="right", fill="y")
         panel.pack_propagate(False)
         tk.Frame(panel, bg=ACCENT, height=self.px(4)).pack(fill="x")
-        inner = tk.Frame(panel, bg=CARD, padx=self.px(26), pady=self.px(22))
+        inner = tk.Frame(panel, bg=CARD, padx=self.px(26), pady=self.px(10))
         inner.pack(fill="both", expand=True)
 
         self.text(inner, "JOGAR", 8, "bold", ACCENT).pack(anchor="w")
-        self.text(inner, "É só selecionar um nick e jogar.", 15, "bold").pack(anchor="w", pady=(self.px(2), 0))
+        self.text(inner, "Escolha seu nick e jogue.", 14, "bold").pack(anchor="w", pady=(self.px(2), 0))
 
         # Perfil
         profile = tk.Frame(inner, bg=FIELD, highlightthickness=1, highlightbackground=BORDER,
-                           padx=self.px(12), pady=self.px(10))
-        profile.pack(fill="x", pady=(self.px(14), self.px(16)))
-        size = self.px(40)
+                           padx=self.px(12), pady=self.px(8))
+        profile.pack(fill="x", pady=(self.px(6), self.px(6)))
+        size = self.px(32)
         self.avatar = tk.Canvas(profile, width=size, height=size, bg=FIELD, highlightthickness=0)
         self.avatar.pack(side="left")
+        self.avatar.bind("<Configure>", lambda event: self.draw_avatar(self.nickname.get().strip() or "Player"))
         who = tk.Frame(profile, bg=FIELD)
         who.pack(side="left", padx=(self.px(12), 0))
         self.profile_name = self.text(who, "", 11, "bold")
@@ -324,11 +331,11 @@ class Launcher(tk.Tk):
                                    insertbackground=ACCENT, relief="flat", highlightthickness=0,
                                    disabledbackground=FIELD, disabledforeground=MUTED,
                                    font=("Segoe UI", 11))
-        self.nick_input.pack(fill="x", ipady=self.px(8))
+        self.nick_input.pack(fill="x", ipady=self.px(6))
         self.nick_input.bind("<FocusIn>", lambda e: self.nick_box.configure(highlightbackground=ACCENT))
         self.nick_input.bind("<FocusOut>", lambda e: self.nick_box.configure(highlightbackground=BORDER))
         self.nick_hint = self.text(inner, "", 8, color=MUTED)
-        self.nick_hint.pack(anchor="w", pady=(self.px(5), self.px(16)))
+        self.nick_hint.pack(anchor="w", pady=(self.px(4), self.px(8)))
 
         # Versão
         version_header = tk.Frame(inner, bg=CARD)
@@ -337,30 +344,49 @@ class Launcher(tk.Tk):
         self.refresh_button = self.link(version_header, "↻  Atualizar", self.refresh, color=ACCENT,
                                         hover=ACCENT_HOVER, font=("Segoe UI", 9, "bold"))
         self.refresh_button.pack(side="right")
-        self.versions = ttk.Combobox(inner, textvariable=self.version, state="readonly",
-                                     font=("Segoe UI", 11), height=18)
+        self.versions = VersionCombobox(inner, textvariable=self.version, state="readonly",
+                                       font=("Segoe UI", 11), height=18,
+                                       heading_background=ACCENT_SOFT, heading_foreground=MUTED)
         self.versions.pack(fill="x")
         self.count_label = self.text(inner, "", 8, color=MUTED)
         self.count_label.pack(anchor="w", pady=(self.px(5), 0))
+        filters = tk.Frame(inner, bg=CARD)
+        filters.pack(fill="x", pady=(self.px(6), 0))
+        self.filter_buttons = []
+        for label, variable in (("Exibir versões betas", self.show_betas), ("Snapshots", self.show_snapshots)):
+            button = ttk.Checkbutton(filters, text=label, variable=variable,
+                                     command=self.on_filter_change, style="VersionFilter.TCheckbutton")
+            button.pack(side="left", padx=(0, self.px(10)))
+            self.filter_buttons.append(button)
 
         # Rodapé do painel: status + botão
         bottom = tk.Frame(inner, bg=CARD)
-        bottom.pack(side="bottom", fill="x")
+        # Reserva primeiro o espaço das ações, mesmo na altura mínima da janela.
+        bottom.pack(side="bottom", fill="x", before=inner.winfo_children()[0])
         self.progress_bar = ttk.Progressbar(bottom, style="Install.Horizontal.TProgressbar",
                                            maximum=100, value=self.progress_value)
         self.progress_bar.pack(fill="x", pady=(0, self.px(8)))
         self.play_button = self.button(bottom, "PLAY", self.play, font=("Segoe UI", 14, "bold"),
-                                       pady=self.px(12))
+                                       pady=self.px(10))
         self.play_button.pack(fill="x")
-        status_row = tk.Frame(bottom, bg=CARD)
-        status_row.pack(fill="x", pady=(self.px(12), 0))
+        status_row = tk.Frame(bottom, bg=CARD, padx=self.px(2))
+        status_row.pack(fill="x", pady=(self.px(6), 0))
+        status_row.columnconfigure(1, weight=1)
         dot = self.px(8)
-        self.status_dot = tk.Canvas(status_row, width=dot, height=dot, bg=CARD, highlightthickness=0)
-        self.status_dot.create_oval(0, 0, dot, dot, fill=CARD, outline="", tags="dot")
-        self.status_dot.pack(side="left", anchor="n", pady=(self.px(5), 0), padx=(0, self.px(8)))
-        tk.Label(status_row, textvariable=self.status, bg=CARD, fg=MUTED, anchor="w",
-                 wraplength=self.px(280), justify="left",
-                 font=("Segoe UI", 9)).pack(side="left", fill="x", expand=True)
+        inset = max(2, self.px(2))
+        line_height = tkfont.Font(family="Segoe UI", size=9).metrics("linespace")
+        dot_y = (line_height + inset * 2 - dot) / 2
+        self.status_dot = tk.Canvas(status_row, width=dot + inset * 2, height=line_height + inset * 2,
+                                    bg=CARD, borderwidth=0, highlightthickness=0)
+        self.status_dot.create_oval(inset, dot_y, inset + dot, dot_y + dot, fill=CARD, outline="", tags="dot")
+        self.status_dot.grid(row=0, column=0, sticky="nw", padx=(0, self.px(4)))
+        self.status_label = tk.Label(status_row, textvariable=self.status, bg=CARD, fg=MUTED,
+                                     anchor="nw", width=1, height=2, justify="left",
+                                     borderwidth=0, highlightthickness=0, padx=self.px(4), pady=inset,
+                                     wraplength=self.px(260), font=("Segoe UI", 9))
+        self.status_label.grid(row=0, column=1, sticky="ew")
+        self.status_label.bind("<Configure>", lambda event: self.status_label.configure(
+            wraplength=max(1, event.width - self.px(8))))
 
     # ------------------------------------------------------------------ desenho
     @staticmethod
@@ -450,7 +476,12 @@ class Launcher(tk.Tk):
                                    font=("Segoe UI", 26, "bold"), fill=TEXT)
     
     def draw_avatar(self, nickname):
-        canvas, size = self.avatar, self.px(40)
+        canvas = self.avatar
+        width = canvas.winfo_width() if canvas.winfo_width() > 1 else int(canvas.cget("width"))
+        height = canvas.winfo_height() if canvas.winfo_height() > 1 else int(canvas.cget("height"))
+        inset = max(1, self.px(1))
+        size = max(1, min(width, height) - inset * 2)
+        left, top = (width - size) / 2, (height - size) / 2
         canvas.delete("all")
         digest = hashlib.md5(nickname.encode("utf-8")).digest()
         skins = ("#f2c9a0", "#e0ac7e", "#c68a5a", "#8d5a3b", "#f6d7b8")
@@ -469,7 +500,9 @@ class Launcher(tk.Tk):
         grid[5][3] = grid[5][4] = mix(skin, "#000000", 0.12)
         for r, row in enumerate(grid):
             for c, color in enumerate(row):
-                canvas.create_rectangle(c * p, r * p, (c + 1) * p, (r + 1) * p, fill=color, outline="")
+                canvas.create_rectangle(round(left + c * p), round(top + r * p),
+                                        round(left + (c + 1) * p), round(top + (r + 1) * p),
+                                        fill=color, outline="")
 
     # ------------------------------------------------------------------ estado
     def say(self, text, tone="idle"):
@@ -509,7 +542,6 @@ class Launcher(tk.Tk):
 
     def update_stats(self):
         self.set_stat("versions", str(len(self.local_versions)))
-        self.set_stat("last", str(self.settings.get("version") or "—"))
         try:
             memory = int(self.settings.get("memory_mb", 2048))
             self.set_stat("memory", f"{memory:,} MB".replace(",", "."))
@@ -518,7 +550,8 @@ class Launcher(tk.Tk):
 
     def _sync(self):
         """Aplica o estado atual (versões, status, ocupado) aos widgets."""
-        self.versions["values"] = self.version_list
+        visible = set(self.version_list)
+        self.versions.set_groups([version for version in self.local_versions if version in visible], self.version_list)
         self.on_version()
         self.update_stats()
         self.say(self.status.get(), self.status_tone)
@@ -528,9 +561,10 @@ class Launcher(tk.Tk):
         if self.busy or self.catalog_loading:
             return
         try:
-            self.local_versions = installed_versions()
+            GAME_DIR.mkdir(parents=True, exist_ok=True)
+            self.load_local_versions()
         except OSError as error:
-            self.say(f"Não foi possível listar as versões: {error}", "error")
+            self.say(f"Não foi possível acessar a pasta do jogo: {error}", "error")
             return
         self.merge_versions()
         self._sync()
@@ -547,11 +581,46 @@ class Launcher(tk.Tk):
     def merge_versions(self):
         previous = self.version.get() or self.settings.get("version")
         official = list(self.catalog.versions) if self.catalog else []
-        self.version_list = list(dict.fromkeys(self.local_versions + official))
+        self.version_list = [version for version in dict.fromkeys(self.local_versions + official)
+                             if self.version_visible(version)]
         fallback = self.catalog.latest_release if self.catalog else ""
         if fallback not in self.version_list:
             fallback = self.version_list[0] if self.version_list else ""
         self.version.set(previous if previous in self.version_list else fallback)
+
+    def load_local_versions(self):
+        self.local_versions = installed_versions()
+        self.local_version_types = {}
+        for version in self.local_versions:
+            try:
+                manifest = read_json(version_file(GAME_DIR, version))
+                self.local_version_types[version] = manifest.get("type", "release")
+            except LaunchError:
+                # Um perfil externo incompleto continua listado para poder ser reparado.
+                pass
+
+    def version_visible(self, version):
+        if version == "1.0":
+            return True
+        entry = self.catalog.versions.get(version, {}) if self.catalog else {}
+        kind = entry.get("type") or self.local_version_types.get(version, "release")
+        if kind in ("old_alpha", "alpha", "old_beta", "beta"):
+            return self.show_betas.get()
+        if kind == "snapshot":
+            return self.show_snapshots.get()
+        return True
+
+    def on_filter_change(self):
+        if self.busy:
+            return
+        self.merge_versions()
+        self._sync()
+        if not self.catalog_loading:
+            self.say(f"{len(self.version_list)} versões na lista. Escolha uma e dê Play.")
+        try:
+            self.persist()
+        except OSError as error:
+            messagebox.showerror("Não foi possível salvar os filtros", str(error), parent=self)
 
     def on_version(self):
         if not hasattr(self, "count_label"):
@@ -579,17 +648,31 @@ class Launcher(tk.Tk):
             self.progress_active = True
 
     def persist(self):
-        self.settings.update(nickname=self.nickname.get().strip(), version=self.version.get())
+        self.settings.update(nickname=self.nickname.get().strip(), version=self.version.get(),
+                             show_betas=self.show_betas.get(), show_snapshots=self.show_snapshots.get())
         save_settings(self.settings)
 
     def set_busy(self, busy, text="PLAY"):
+        running = self.process is not None
+        if running:
+            text = "Fechando…" if self.stopping else "Fechar"
         self.busy, self.play_text = busy, text
-        state = "disabled" if busy or not self.version.get() else "normal"
-        self.play_button.configure(state=state, text=text, bg=ACCENT if state == "normal" else DISABLED,
+        enabled = (running and not self.stopping) or (not busy and self.version.get() in self.version_list)
+        state = "normal" if enabled else "disabled"
+        color = DANGER if running else ACCENT
+        hover = mix(DANGER, "#000000", 0.15) if running else ACCENT_HOVER
+        self.play_button.configure(state=state, text=text, bg=color if enabled else DISABLED,
+                                   command=self.stop_game if running else self.play,
                                    cursor="hand2" if state == "normal" else "arrow")
+        self.play_button.bind("<Enter>", lambda event: self.play_button.cget("state") == "normal"
+                              and self.play_button.configure(bg=hover))
+        self.play_button.bind("<Leave>", lambda event: self.play_button.cget("state") == "normal"
+                              and self.play_button.configure(bg=color))
         self.nick_input.configure(state="disabled" if busy else "normal")
         self.versions.configure(state="disabled" if busy else "readonly")
         self.refresh_button.configure(state="disabled" if busy or self.catalog_loading else "normal")
+        for button in self.filter_buttons:
+            button.configure(state="disabled" if busy else "normal")
         if not busy:
             self.progress_bar.stop()
             self.progress_active = False
@@ -597,7 +680,7 @@ class Launcher(tk.Tk):
             self.progress_bar.configure(mode="determinate", value=0)
 
     def play(self):
-        if self.busy or not self.version.get():
+        if self.busy or self.version.get() not in self.version_list:
             return
         nickname, version = self.nickname.get().strip(), self.version.get()
         if not NICK_RE.fullmatch(nickname):
@@ -635,6 +718,21 @@ class Launcher(tk.Tk):
                 self.events.put(("error", str(error)))
         threading.Thread(target=worker, daemon=True).start()
 
+    def stop_game(self):
+        if self.process is None or self.stopping:
+            return
+        process = self.process
+        self.stopping = True
+        self.set_busy(True)
+        self.say("Encerrando Minecraft…", "busy")
+        def worker():
+            try:
+                terminate_game(process)
+                self.events.put(("stopped", process))
+            except Exception as error:
+                self.events.put(("stop_error", (process, str(error))))
+        threading.Thread(target=worker, daemon=True).start()
+
     def poll(self):
         try:
             while True:
@@ -651,7 +749,7 @@ class Launcher(tk.Tk):
                         elif value.cached:
                             self.say("Catálogo em cache. Versões completas podem abrir sem internet.")
                         else:
-                            self.say(f"{len(self.catalog.versions)} versões disponíveis. O download começa no Play.")
+                            self.say(f"{len(self.version_list)} versões na lista. Escolha uma e dê Play.")
                 elif kind == "progress":
                     self.set_progress(*value)
                 elif kind == "error":
@@ -660,18 +758,31 @@ class Launcher(tk.Tk):
                     messagebox.showerror("Não foi possível iniciar", value, parent=self)
                 elif kind == "started":
                     self.process = value
-                    self.local_versions = installed_versions()
+                    self.stopping = False
+                    self.load_local_versions()
+                    self.merge_versions()
                     self._sync()
                     self.progress_bar.stop()
                     self.progress_active = False
                     self.progress_bar.configure(mode="determinate", value=100)
-                    self.set_busy(True, "EM JOGO")
-                    self.say("Minecraft iniciado. Você pode fechar o launcher.", "busy")
+                    self.set_busy(True)
+                    self.say("Minecraft em execução. Use Fechar para encerrar.", "busy")
                     if self.settings.get("close_on_launch"):
-                        self.after(1200, self.close)
+                        self.after(1200, lambda process=value: self.close()
+                                   if self.process is process and not self.stopping else None)
+                elif kind == "stopped" and self.process is value:
+                    self.process = None
+                    self.stopping = False
+                    self.set_busy(False)
+                    self.say("Minecraft encerrado.", "ok")
+                elif kind == "stop_error" and self.process is value[0]:
+                    self.stopping = False
+                    self.set_busy(True)
+                    self.say("Não foi possível encerrar o jogo. Tente Fechar novamente.", "error")
+                    messagebox.showerror("Não foi possível encerrar", value[1], parent=self)
         except queue.Empty:
             pass
-        if self.process is not None:
+        if self.process is not None and not self.stopping:
             code = self.process.poll()
             if code is not None:
                 self.process = None
@@ -872,7 +983,7 @@ class SettingsDialog(tk.Toplevel):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Minecraft Pirata - Minecraft de graça!.")
+    parser = argparse.ArgumentParser(description="Mine Pirata - Minecraft de graça!.")
     parser.add_argument("--check", metavar="VERSAO", help="Valida uma instalação sem abrir o jogo nem extrair arquivos.")
     parser.add_argument("--nick", default="Player", help="Nick usado na validação (padrão: Player).")
     options = parser.parse_args()

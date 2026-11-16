@@ -1,3 +1,10 @@
 __pycache__/
 *.py[cod]
 .venv/
+build/
+dist/
+tests/
+.build-tools/
+.installer-smoke/
+build_support/*.spec
+MinePirata-Setup-*.exe

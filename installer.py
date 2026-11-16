@@ -1,5 +1,3 @@
-"""Catálogo Mojang e instalação sob demanda, sem dependências externas."""
-
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -17,11 +15,10 @@ import urllib.request
 from minecraft import (APP_DIR, GAME_DIR, ARCH, OS_NAME, LaunchError, find_java,
                        inside, library_entries, read_json, resolve_version, version_file)
 
-
 CATALOG_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 RUNTIME_URL = "https://piston-meta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"
 ASSET_URL = "https://resources.download.minecraft.net/"
-USER_AGENT = "BlockLauncher/1.2 (Python urllib)"
+USER_AGENT = "BlockLauncher/1.0 (Python urllib)"
 
 
 class InstallCancelled(LaunchError):
@@ -84,7 +81,6 @@ def fetch_catalog(app_dir=APP_DIR, refresh=True):
         if cached:
             return cached
         raise
-    # Falhar ao gravar o cache não impede que o catálogo online seja usado.
     temporary = None
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
@@ -188,7 +184,6 @@ def run_downloads(jobs, reporter, cancel=None):
     jobs = list({path: spec for path, spec in jobs}.items())
     reporter.completed, reporter.total = 0, len(jobs)
     reporter.report(f"Verificando {len(jobs)} arquivos…", True)
-    # Limita também os futures pendentes para catálogos grandes de assets.
     def work(job):
         path, spec = job
         def on_bytes(done, total):
@@ -200,7 +195,6 @@ def run_downloads(jobs, reporter, cancel=None):
         download_file(path, spec, cancel, on_bytes)
         reporter.complete()
     with ThreadPoolExecutor(max_workers=6, thread_name_prefix="download") as executor:
-        # Lotes evitam enfileirar milhares de trabalhos depois de um cancelamento.
         for offset in range(0, len(jobs), 36):
             check_cancel(cancel)
             list(executor.map(work, jobs[offset:offset + 36]))
@@ -238,7 +232,7 @@ def ensure_java(manifest, root, settings, reporter, cancel):
     try:
         return find_java(root, required, settings.get("java_path", ""))
     except LaunchError:
-        # Uma escolha manual inválida deve ser corrigida pelo usuário.
+        # uma escolha manual inválida deve ser corrigida pelo user.
         if settings.get("java_path"):
             raise
     check_cancel(cancel)
