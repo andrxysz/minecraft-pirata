@@ -1,5 +1,3 @@
-"""Interface Tkinter do Mine Pirata. Execute: python launcher.py."""
-
 from __future__ import annotations
 
 import argparse
@@ -55,7 +53,6 @@ THEMES = {
     },
 }
 
-# Cores do tema ativo (preenchidas por apply_theme).
 BG = CARD = FIELD = BORDER = TEXT = MUTED = ACCENT = ACCENT_HOVER = ACCENT_SOFT = ""
 DISABLED = ON_DISABLED = WARN = DANGER = ""
 SCENE: dict = {}
@@ -67,7 +64,6 @@ def apply_theme(name):
 
 apply_theme("light")
 
-# Ícone 8×8 do bloco de grama (logo da janela e da barra superior).
 ICON_COLORS = {"G": "#5fb944", "g": "#4c9a37", "D": "#9b6b43", "d": "#85593a", "l": "#b07e52"}
 ICON_ROWS = ("GGGGGGGG", "GGgGGGgG", "GGGGGGGG", "DGgDGgGD",
              "DDDDDDDD", "DdDDDDlD", "DDDDDdDD", "DDDlDDDD")
@@ -153,7 +149,7 @@ class Launcher(tk.Tk):
         self.icons = [base.zoom(k) for k in (8, 4, 2)]  # 64, 32 e 16 px
         self.iconphoto(True, *self.icons)
 
-    # ------------------------------------------------------------------ estilo
+
     def _style(self):
         self.option_add("*Font", ("Segoe UI", 10))
         self.option_add("*TCombobox*Listbox.background", CARD)
@@ -185,6 +181,7 @@ class Launcher(tk.Tk):
                         troughcolor=FIELD, bordercolor=FIELD, lightcolor=ACCENT, darkcolor=ACCENT,
                         thickness=6)
 
+
     def card(self, parent, **kwargs):
         return tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=BORDER, **kwargs)
 
@@ -211,7 +208,6 @@ class Launcher(tk.Tk):
         widget.bind("<Leave>", lambda e: widget.cget("state") == "normal" and widget.configure(bg=bg))
         return widget
 
-    # ------------------------------------------------------------------ layout
     def _build(self):
         """(Re)constrói a interface com o tema ativo, preservando o estado."""
         for child in self.winfo_children():
@@ -359,9 +355,7 @@ class Launcher(tk.Tk):
             button.pack(side="left", padx=(0, self.px(10)))
             self.filter_buttons.append(button)
 
-        # Rodapé do painel: status + botão
         bottom = tk.Frame(inner, bg=CARD)
-        # Reserva primeiro o espaço das ações, mesmo na altura mínima da janela.
         bottom.pack(side="bottom", fill="x", before=inner.winfo_children()[0])
         self.progress_bar = ttk.Progressbar(bottom, style="Install.Horizontal.TProgressbar",
                                            maximum=100, value=self.progress_value)
@@ -388,7 +382,7 @@ class Launcher(tk.Tk):
         self.status_label.bind("<Configure>", lambda event: self.status_label.configure(
             wraplength=max(1, event.width - self.px(8))))
 
-    # ------------------------------------------------------------------ desenho
+
     @staticmethod
     def draw_block_icon(canvas, size):
         p = size / 8
@@ -400,7 +394,6 @@ class Launcher(tk.Tk):
     def draw_scene(self, canvas, width, height):
         s = SCENE
         canvas.delete("all")
-        # Céu em degradê
         band = 4
         for y in range(0, height, band):
             canvas.create_rectangle(0, y, width, y + band, outline="",
@@ -412,16 +405,14 @@ class Launcher(tk.Tk):
                 canvas.create_rectangle(x, y, x + size, y + size, outline="",
                                         fill="#ffffff" if i % 3 else "#9fb3d9")
         tile = self.px(24)
-        # Sol (ou lua)
         sx, sy, sz = width - self.px(130), self.px(46), self.px(46)
         canvas.create_rectangle(sx - self.px(10), sy - self.px(10), sx + sz + self.px(10), sy + sz + self.px(10),
                                 fill=s["halo"], outline="")
         canvas.create_rectangle(sx, sy, sx + sz, sy + sz, fill=s["sun"], outline="")
-        if s["stars"]:  # crateras da lua
+        if s["stars"]:  # vibecoded
             for cx, cy, c in ((0.2, 0.25, 0.2), (0.6, 0.55, 0.25), (0.3, 0.7, 0.15)):
                 x0, y0 = sx + sz * cx, sy + sz * cy
                 canvas.create_rectangle(x0, y0, x0 + sz * c, y0 + sz * c, fill="#c9cfdc", outline="")
-        # Nuvens
         for cx, cy, blocks in ((0.52, 0.12, 5), (0.30, 0.30, 4), (0.78, 0.36, 6), (0.08, 0.50, 3)):
             x0, y0, c = int(width * cx), int(height * cy), self.px(14)
             canvas.create_rectangle(x0, y0 + c, x0 + blocks * c, y0 + 2 * c, fill=s["cloud"], outline="")
@@ -430,13 +421,11 @@ class Launcher(tk.Tk):
                                     fill=s["cloud_shadow"], outline="")
         ground = int(height * 0.70)
         cols = width // tile + 2
-        # Colinas ao fundo
         for i in range(cols):
             h = round(2.2 + 1.6 * math.sin(i * 0.23 + 2) + math.sin(i * 0.61))
             top = ground - h * tile + tile
             canvas.create_rectangle(i * tile, top, (i + 1) * tile, height, fill=s["hill"], outline="")
             canvas.create_rectangle(i * tile, top, (i + 1) * tile, top + self.px(5), fill=s["hill_top"], outline="")
-        # Terreno principal
         tops = []
         for i in range(cols):
             x = i * tile
@@ -457,7 +446,8 @@ class Launcher(tk.Tk):
                     ox = ((i * 7 + row * 3) % 3) * tile // 4
                     canvas.create_rectangle(x + ox + 2, y + tile // 3, x + ox + tile // 4 + 2,
                                             y + tile // 3 + tile // 5, fill=speck, outline="")
-        # Árvores (só na metade direita, longe do texto)
+
+
         for i in range(cols):
             if i % 7 != 3 or i * tile < width * 0.45:
                 continue
@@ -503,8 +493,6 @@ class Launcher(tk.Tk):
                 canvas.create_rectangle(round(left + c * p), round(top + r * p),
                                         round(left + (c + 1) * p), round(top + (r + 1) * p),
                                         fill=color, outline="")
-
-    # ------------------------------------------------------------------ estado
     def say(self, text, tone="idle"):
         self.status.set(text)
         self.status_tone = tone
@@ -596,7 +584,6 @@ class Launcher(tk.Tk):
                 manifest = read_json(version_file(GAME_DIR, version))
                 self.local_version_types[version] = manifest.get("type", "release")
             except LaunchError:
-                # Um perfil externo incompleto continua listado para poder ser reparado.
                 pass
 
     def version_visible(self, version):
@@ -793,7 +780,6 @@ class Launcher(tk.Tk):
                     self.say(f"O jogo encerrou com código {code}. Veja Abrir logs → game.log.", "error")
         self.after(150, self.poll)
 
-    # ------------------------------------------------------------------ configurações
     def open_settings(self):
         SettingsDialog(self)
 

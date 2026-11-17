@@ -69,7 +69,6 @@ def installed_versions(root: Path = GAME_DIR) -> list[str]:
     directory = root / "versions"
     if not directory.is_dir():
         return []
-    # A data do manifesto funciona também para snapshots e versões modificadas.
     found = [(p.stat().st_mtime, p.parent.name) for p in directory.glob("*/*.json")
              if p.stem == p.parent.name]
     return [name for _, name in sorted(found, reverse=True)]
@@ -94,7 +93,6 @@ def resolve_version(root: Path, version: str, seen: tuple = ()) -> dict:
         arguments[key] = parent.get("arguments", {}).get(key, []) + child.get("arguments", {}).get(key, [])
     if arguments:
         merged["arguments"] = arguments
-    # A biblioteca declarada pelo perfil filho substitui a versão do pai.
     libraries = {}
     for library in child.get("libraries", []) + parent.get("libraries", []):
         libraries.setdefault(library_key(library), library)
@@ -117,7 +115,6 @@ def rules_allow(item: dict) -> bool:
             continue
         if "version" in system and not re.search(system["version"], platform.version()):
             continue
-        # Não usamos demo, resolução customizada ou Quick Play.
         if any(bool(value) for value in rule.get("features", {}).values()):
             continue
         allowed = rule.get("action") == "allow"
@@ -143,7 +140,7 @@ def library_entries(root: Path, manifest: dict) -> tuple[list[tuple[Path, dict]]
             continue
         downloads = library.get("downloads", {})
         artifact = downloads.get("artifact")
-        # Bibliotecas antigas sem downloads usam coordenadas Maven.
+        # Maven
         if artifact is not None or not downloads:
             path = inside(library_root, (artifact or {}).get("path") or maven_path(library["name"]))
             spec = dict(artifact or {})
@@ -217,7 +214,6 @@ def find_java(root: Path, required: int, override: str = "") -> Path:
                     if directory.is_dir():
                         candidates.extend(directory.glob(f"*/bin/{executable}"))
     for candidate in dict.fromkeys(candidates):
-        # Um runtime gerenciado só fica disponível após terminar todos os downloads.
         if candidate.is_relative_to(runtime) and "blocklauncher" in candidate.relative_to(runtime).parts:
             if not (candidate.parent.parent / ".complete").is_file():
                 continue
@@ -278,7 +274,7 @@ def build_plan(version: str, nickname: str, settings: dict | None = None,
     java = find_java(root, required, settings.get("java_path", ""))
     classpath, natives = library_files(root, manifest)
     client_version = manifest["_client"]
-    version_file(root, client_version)  # Valida o identificador antes de montar o caminho.
+    version_file(root, client_version) 
     client = inside(root / "versions", f"{client_version}/{client_version}.jar")
     if not client.is_file():
         raise LaunchError(f"O arquivo do jogo não foi encontrado:\n{client}")
@@ -394,7 +390,6 @@ def terminate_game(process: subprocess.Popen, timeout: float = 10) -> None:
                 details = (result.stderr or result.stdout).strip()
                 raise LaunchError(f"Não foi possível encerrar o Minecraft: {details}")
         else:
-            # start_game cria uma sessão própria, sem incluir o launcher no grupo.
             if os.getpgid(process.pid) != process.pid:
                 raise LaunchError("O jogo não pertence a um grupo de processos isolado.")
             os.killpg(process.pid, signal.SIGKILL)
